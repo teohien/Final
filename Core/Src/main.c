@@ -507,7 +507,7 @@ void UARTTask(void *Param)
     myUartQueueData_t *msg1 = osMailAlloc(myQueue02Handle, osWaitForever);
     msg1->id = 2;                   // gửi đến HCSR04Task
     msg1->Frequency[1] = 1;         // chu kì HCSR04ask
-    msg1->Threshold[3] = 1;         // Ngưỡng khoảng cách
+    msg1->Threshold[2] = 1;         // Ngưỡng khoảng cách
     osMailPut(myQueue02Handle, msg1);
 // Xử lý command    
   }
