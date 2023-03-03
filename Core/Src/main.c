@@ -29,11 +29,14 @@
 /* Private typedef -----------------------------------------------------------*/
 /* USER CODE BEGIN PTD */
 typedef struct{
+  uint8_t id;
+  uint8_t command;
   uint8_t Frequency[2];
   uint8_t Threshold[3];
 }myUartQueueData_t;
 
 typedef struct{
+  uint8_t id;
 	uint8_t temp;
   uint8_t humi;
   uint8_t distance;
@@ -397,34 +400,87 @@ void HAL_UART_RxCpltCallback(UART_HandleTypeDef *huart)
 // Task đọc và gửi nhiệt độ
 void DHTTask(void *Param)
 {
+  uint8_t Frequency = 1000;
+  uint8_t Threshold[2] = {100,100};
+
+  osEvent Recv_Task_data; // nhận dữ liệu từ Queue02
+
   myQueueData_t *msg = osMailAlloc(myQueue01Handle, osWaitForever);
+  msg->id = 1;
   while(1)
   {
-
-// Đưa nhiệt độ, độ ẩm vào queue01 để hiển thị LCD'
-   msg->temp = temp;
+// Nhận ngưỡng nhiệt, độ ẩm và chu kì từ Queue2
+    Recv_Task_data = osMailGet(myQueue02Handle, 0);
+    if (Recv_Task_data.status == osEventMail)
+    {
+      myUartQueueData_t *data = Recv_Task_data.value.p; // con trỏ đến cấu trúc lưu nhiệt độ, độ ẩm
+      if(data->id == 1)                           // gửi cho Task DHT
+      {
+        Frequency = data->Frequency[0];           // chu kì DHT
+        Threshold[0] = data->Threshold[0];        // Ngưỡng nhiệt
+        Threshold[1] = data->Threshold[1];        // Ngưỡng độ ẩm
+        osMailFree(myQueue02Handle, data);
+      }
+    }
+    
+// Đưa nhiệt độ, độ ẩm vào Queue01 để hiển thị LCD
+   msg->temp = temp;      // biến nhiệt độ đo được
    msg->humi = humi;
    osMailPut(myQueue01Handle, msg);
+
+// Chu Kì
+   osDelay(Frequency);
   }
 }
 // Task đọc và gửi khoảng cách
 void HCSR04Task(void *Param)
 {
+  uint8_t Frequency = 1000;
+  uint8_t Threshold = 100;
+
+  osEvent Recv_Task_data; // nhận dữ liệu từ Queue02
   myQueueData_t *msg = osMailAlloc(myQueue01Handle, osWaitForever);
+  msg->id = 2;
   while(1)
   {
+// Nhận ngưỡng khoảng cách, chu kì từ Queue2
+    Recv_Task_data = osMailGet(myQueue02Handle, 0);
+    if (Recv_Task_data.status == osEventMail)
+    {
+      myUartQueueData_t *data = Recv_Task_data.value.p; // con trỏ đến cấu trúc lưu nhiệt độ, độ ẩm
+      if(data->id == 2)                           // gửi cho Task HCSR04
+      {
+        Frequency = data->Frequency[0];           // chu kì 
+        Threshold = data->Threshold[2];           // Ngưỡng khoảng cách
+        osMailFree(myQueue02Handle, data);
+      }
+    }
+// Đưa khoảng cách vào queue01 để hiển thị LCD
     msg->distance = Distance;
     osMailPut(myQueue01Handle, msg);
   }
+
+// Chu kỳ
+osDelay(Frequency);
 }
 // Task hiển thị LCD
 void LCDTask(void *Param)
 {
-  osEvent Recv_Task_data; // nhận dữ liệu từ Queue
+  osEvent Recv_Task_data; // nhận dữ liệu từ Queue01
   while(1)
   {
+    uint8_t temp, humi, distance;
     Recv_Task_data = osMailGet(myQueue01Handle, osWaitForever);
-    myQueueData_t *data = Recv_Task_data.value.p; // con trỏ đến cấu trúc lưu nhiệt độ, độ ẩm
+    myQueueData_t *data = Recv_Task_data.value.p; // con trỏ đến cấu trúc lưu nhiệt độ, độ ẩm, khoảng cách
+    if(data->id == 1) // Nhận nhiệt độ độ ẩm
+    {
+      temp = data->temp;
+      humi = data->humi;
+    }
+    else              // Nhận Khoảng cách
+    {
+      distance = data->distance;
+    }
     // Xử lý hiển thị
 
     // nhận xong phải giải phóng
@@ -439,10 +495,21 @@ void UARTTask(void *Param)
   while(1)
   {
     vTaskSuspend(NULL);
-    myQueueData_t *msg = osMailAlloc(myQueue01Handle, osWaitForever);
-    // Đưa các biến Command; Frequency; Threshold vào Queue2 để các task khác xử lý
-
-    
+// Đưa các biến Command; Frequency; Threshold vào Queue2 để các task khác xử lý
+    myUartQueueData_t *msg = osMailAlloc(myQueue02Handle, osWaitForever);
+// gửi đến DHTTask (Đang để Task DHT có mức ưu tiên cao hơn)
+    msg->id = 1;                   // gửi đến DHTTask
+    msg->Frequency[0] = 1;         // chu kì DHTTask
+    msg->Threshold[0] = 1;         // Ngưỡng nhiệt
+    msg->Threshold[1] = 1;         // Ngưỡng độ ẩm
+    osMailPut(myQueue02Handle, msg);
+// gửi đến HCSR04Task
+    myUartQueueData_t *msg1 = osMailAlloc(myQueue02Handle, osWaitForever);
+    msg1->id = 2;                   // gửi đến HCSR04Task
+    msg1->Frequency[1] = 1;         // chu kì HCSR04ask
+    msg1->Threshold[3] = 1;         // Ngưỡng khoảng cách
+    osMailPut(myQueue02Handle, msg1);
+// Xử lý command    
   }
 }
 //Task xử lý khi nhấn nút
