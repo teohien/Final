@@ -28,6 +28,16 @@
 
 /* Private typedef -----------------------------------------------------------*/
 /* USER CODE BEGIN PTD */
+typedef struct{
+  uint8_t Frequency[2];
+  uint8_t Threshold[3];
+}myUartQueueData_t;
+
+typedef struct{
+	uint8_t temp;
+  uint8_t humi;
+  uint8_t distance;
+}myQueueData_t;
 
 /* USER CODE END PTD */
 
@@ -55,7 +65,10 @@ osThreadId HCSR04TaskHandle;
 osThreadId LCDTaskHandle;
 osThreadId UARTTaskHandle;
 osThreadId ButtonTaskHandle;
-QueueHandle_t Queue02Handle;
+osThreadId ThresholdTaskHandle;
+
+osMessageQId myQueue01Handle;
+osMessageQId myQueue02Handle;
 
 /* Data of DHT11 Sensor */
 float temp = 0;
@@ -124,6 +137,7 @@ void HCSR04Task(void *Param);
 void LCDTask(void *Param);
 void UARTTask(void *Param);
 void ButtonTask(void *Param);
+void ThresholdTask(void *Param);
 uint8_t Rx_data[2];
 /* USER CODE END PFP */
 
@@ -178,7 +192,7 @@ int main(void)
   MX_DMA_Init();
   MX_USART2_UART_Init();
   /* USER CODE BEGIN 2 */
-  HAL_UART_Receive_IT(&huart2, &Rx_data, 2);
+
   /* USER CODE END 2 */
 
   /* USER CODE BEGIN RTOS_MUTEX */
@@ -199,18 +213,22 @@ int main(void)
 
   /* Create the thread(s) */
   /* definition and creation of defaultTask */
-  osThreadDef(defaultTask, StartDefaultTask, osPriorityNormal, 0, 128);
-  defaultTaskHandle = osThreadCreate(osThread(defaultTask), NULL);
-
+ 
   /* USER CODE BEGIN RTOS_THREADS */
+
+  osMailQDef(myQueue01, 14, myQueueData_t);
+  myQueue01Handle = osMailCreate(osMailQ(myQueue01), NULL);
+
+  osMailQDef(myQueue02, 14, myUartQueueData_t);
+  myQueue02Handle = osMailCreate(osMailQ(myQueue02), NULL);
 
   osThreadDef(DHTTask, osPriorityNormal, 0, 128*4);
   DHTTaskHandle  = osThreadCreate(DHTTask, NULL);
   
-  osThreadDef(HCSR04Task, osPriorityNormal, 0, 128*4);
+  osThreadDef(HCSR04Task, osPriorityBelowNormal, 0, 128*4);
   HCSR04TaskHandle  = osThreadCreate(HCSR04Task, NULL);
 
-  osThreadDef(LCDTask, osPriorityNormal, 0, 128*4);
+  osThreadDef(LCDTask, osPriorityAboveNormal, 0, 128*4);
   LCDTaskHandle  = osThreadCreate(DHTTask, NULL);
 
   osThreadDef(UARTTask, osPriorityAboveNormal, 0, 128*4);
@@ -218,6 +236,9 @@ int main(void)
 
   osThreadDef(ButtonTask, osPriorityAboveNormal, 0, 128*4);
   ButtonTaskHandle  = osThreadCreate(ButtonTask, NULL);
+
+  osThreadDef(ThresholdTask, osPriorityAboveNormal, 0, 128*4);
+  ThresholdTaskHandle  = osThreadCreate(ThresholdTask, NULL);
   /* add threads, ... */
   /* USER CODE END RTOS_THREADS */
 
@@ -376,37 +397,52 @@ void HAL_UART_RxCpltCallback(UART_HandleTypeDef *huart)
 // Task đọc và gửi nhiệt độ
 void DHTTask(void *Param)
 {
+  myQueueData_t *msg = osMailAlloc(myQueue01Handle, osWaitForever);
   while(1)
   {
-    vTaskSuspend(NULL);
-    printf("hello from AboveNormal Task\n");
+
+// Đưa nhiệt độ, độ ẩm vào queue01 để hiển thị LCD'
+   msg->temp = temp;
+   msg->humi = humi;
+   osMailPut(myQueue01Handle, msg);
   }
 }
-// Task đ�?c và gửi khoảng cách
+// Task đọc và gửi khoảng cách
 void HCSR04Task(void *Param)
 {
+  myQueueData_t *msg = osMailAlloc(myQueue01Handle, osWaitForever);
   while(1)
   {
-    vTaskSuspend(NULL);
-    printf("hello from AboveNormal Task\n");
+    msg->distance = Distance;
+    osMailPut(myQueue01Handle, msg);
   }
 }
 // Task hiển thị LCD
 void LCDTask(void *Param)
 {
+  osEvent Recv_Task_data; // nhận dữ liệu từ Queue
   while(1)
   {
-    vTaskSuspend(NULL);
-    printf("hello from AboveNormal Task\n");
+    Recv_Task_data = osMailGet(myQueue01Handle, osWaitForever);
+    myQueueData_t *data = Recv_Task_data.value.p; // con trỏ đến cấu trúc lưu nhiệt độ, độ ẩm
+    // Xử lý hiển thị
+
+    // nhận xong phải giải phóng
+    osMailFree(myQueue01Handle, data);
   }
 }
 // Task xử lý khi nhân được ngắt UART
+// Nhận dữ liệu và cập nhật ngưỡng vào Queue2 để các task khác xử lý
+// Thêm 1 task ngưỡng, dùng suspend và resume
 void UARTTask(void *Param)
 {
   while(1)
   {
     vTaskSuspend(NULL);
-    printf("hello from AboveNormal Task\n");
+    myQueueData_t *msg = osMailAlloc(myQueue01Handle, osWaitForever);
+    // Đưa các biến Command; Frequency; Threshold vào Queue2 để các task khác xử lý
+
+    
   }
 }
 //Task xử lý khi nhấn nút
@@ -419,6 +455,15 @@ void ButtonTask(void *Param)
   }
 }
 
+//Task xử lý ngưỡng
+void ThresholdTask(void *Param)
+{
+  while(1)
+  {
+    vTaskSuspend(NULL);
+    printf("hello from AboveNormal Task\n");
+  }
+}
 /* USER CODE END 4 */
 
 /* USER CODE BEGIN Header_StartDefaultTask */
@@ -428,16 +473,7 @@ void ButtonTask(void *Param)
   * @retval None
   */
 /* USER CODE END Header_StartDefaultTask */
-void StartDefaultTask(void const * argument)
-{
-  /* USER CODE BEGIN 5 */
-  /* Infinite loop */
-  for(;;)
-  {
-    osDelay(1);
-  }
-  /* USER CODE END 5 */
-}
+
 
 /**
   * @brief  Period elapsed callback in non blocking mode
